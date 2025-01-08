@@ -56,7 +56,7 @@ def calibrate_camera_online(chessboard_size, frame_size, capture_device_index=0,
     return camera_matrix, dist_coeffs
 
 # Example usage
-chessboard_size = (7, 6)
+chessboard_size = (6, 5)
 frame_size = (640, 480)
 camera_matrix, dist_coeffs = calibrate_camera_online(chessboard_size, frame_size)
 print(camera_matrix)

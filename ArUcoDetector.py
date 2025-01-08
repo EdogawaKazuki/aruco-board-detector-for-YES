@@ -1,12 +1,16 @@
 import cv2
 import numpy as np
 import os
+from collections import deque
 
 # Add these as global variables at the top of the file, after imports
 home_position = None
 home_rotation_matrix = None
 camera_position = None
 camera_rotation_matrix = None
+FILTER_WINDOW_SIZE = 10  # Adjust this value to change smoothing (higher = smoother but more latency)
+position_history = deque(maxlen=FILTER_WINDOW_SIZE)
+rotation_history = deque(maxlen=FILTER_WINDOW_SIZE)
 
 def load_camera_data(file_path):
     # Load camera matrix and distortion coefficients from a file
@@ -15,11 +19,16 @@ def load_camera_data(file_path):
         dist_coeffs = data['dist_coeffs']
     return camera_matrix, dist_coeffs
 
+def apply_low_pass_filter(new_value, history):
+    history.append(new_value)
+    result = np.mean(history, axis=0)
+    print("result: ", result)
+    return result
+
 def detect_aruco_markers(image, camera_matrix, dist_coeffs):
     global home_position, home_rotation_matrix, camera_position, camera_rotation_matrix
+    global position_history, rotation_history
     
-    # Clear console before new output
-    os.system('cls' if os.name == 'nt' else 'clear')
 
     # Load the dictionary that was used to generate the markers
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -27,8 +36,8 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
 
     # Create ArUco board
     board = cv2.aruco.GridBoard(
-        (5, 7),
-        0.03,
+        (3, 4),
+        0.05,
         0.01,
         aruco_dict
     )
@@ -37,6 +46,8 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
     corners, ids, rejectedImgPoints = cv2.aruco.detectMarkers(image, aruco_dict, parameters=parameters)
 
     if ids is not None:
+        # Clear console before new output
+        os.system('cls' if os.name == 'nt' else 'clear')
         # Estimate the board pose
         retval, rvec, tvec = cv2.aruco.estimatePoseBoard(
             corners, ids, board, camera_matrix, dist_coeffs, None, None
@@ -47,6 +58,7 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
             cv2.drawFrameAxes(image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
             cv2.aruco.drawDetectedMarkers(image, corners, ids)
             
+            
             # Convert board rotation vector to rotation matrix
             rmat, _ = cv2.Rodrigues(rvec)
             
@@ -55,8 +67,38 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
             
             # Camera rotation is inverse of board rotation
             camera_rotation_matrix = rmat.T
-            camera_rotation_vec, _ = cv2.Rodrigues(camera_rotation_matrix)
+            # camera_rotation_vec, _ = cv2.Rodrigues(camera_rotation_matrix)
             
+            # Apply low-pass filter to position and rotation
+            camera_position = apply_low_pass_filter(np.array(camera_position), position_history)
+            camera_rotation_matrix = apply_low_pass_filter(camera_rotation_matrix, rotation_history)
+            
+            # Ensure rotation matrix stays orthogonal after filtering
+            u, _, vt = np.linalg.svd(camera_rotation_matrix)
+            camera_rotation_matrix = u @ vt
+            
+            # Convert to matrix format for consistency with rest of code
+            camera_position = np.matrix(camera_position).T
+            camera_rotation_matrix = np.matrix(camera_rotation_matrix)
+            
+            # Draw home position axes if set
+            # if home_position is not None:
+            #     # Calculate relative position and check distance
+            #     relative_position = home_position - camera_position
+            #     distance = np.linalg.norm(relative_position)
+                
+            #     # Only draw if distance is greater than threshold (e.g., 0.1 meters)
+            #     if distance > 0.1:
+            #         # Calculate the transformation from current camera to home camera
+            #         relative_rotation = home_rotation_matrix @ camera_rotation_matrix.T
+            #         relative_position = camera_rotation_matrix @ relative_position
+                    
+            #         # Convert rotation to rotation vector
+            #         relative_rvec, _ = cv2.Rodrigues(relative_rotation)
+                    
+            #         # Draw home camera frame from current camera's perspective
+            #         cv2.drawFrameAxes(image, camera_matrix, dist_coeffs, relative_rvec, relative_position, 0.15)
+
             # Convert rotation matrix to Euler angles (in radians)
             # Order of rotations: yaw (Y), pitch (X), roll (Z)
             pitch = np.arctan2(-camera_rotation_matrix[2,0], 
@@ -77,7 +119,7 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
             if home_position is not None:
                 relative_position = current_position - home_position
                 relative_rotation = current_rotation_matrix @ home_rotation_matrix.T
-                
+                distance = np.linalg.norm(relative_position)
                 # Convert relative rotation to euler angles
                 pitch = np.arctan2(-relative_rotation[2,0], 
                                  np.sqrt(relative_rotation[2,1]**2 + relative_rotation[2,2]**2))
@@ -89,19 +131,29 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
                 rel_pitch_deg = np.degrees(pitch)
                 rel_roll_deg = np.degrees(roll)
                 
-                print(f"Current camera position: {camera_position.flatten()}")
+                print(f"Current camera position (m):")
+                print(f"  X: {camera_position[0,0]:.3f}")
+                print(f"  Y: {camera_position[0,1]:.3f}")
+                print(f"  Z: {camera_position[0,2]:.3f}")
                 print(f"Current camera angles (degrees):")
                 print(f"  Yaw (Y-axis): {yaw_deg:.2f}")
                 print(f"  Pitch (X-axis): {pitch_deg:.2f}")
                 print(f"  Roll (Z-axis): {roll_deg:.2f}")
                 print("\nRelative to home:")
-                print(f"Position: {relative_position.flatten()}")
+                print(f"Position (m):")
+                print(f"  X: {relative_position[0,0]:.3f}")
+                print(f"  Y: {relative_position[0,1]:.3f}")
+                print(f"  Z: {relative_position[0,2]:.3f}")
                 print(f"Angles (degrees):")
                 print(f"  Yaw: {rel_yaw_deg:.2f}")
                 print(f"  Pitch: {rel_pitch_deg:.2f}")
                 print(f"  Roll: {rel_roll_deg:.2f}")
+                print(f"Distance: {distance:.3f} meters")
             else:
-                print(f"Camera position: {camera_position.flatten()}")
+                print(f"Camera position (m):")
+                print(f"  X: {camera_position[0,0]:.3f}")
+                print(f"  Y: {camera_position[0,1]:.3f}")
+                print(f"  Z: {camera_position[0,2]:.3f}")
                 print(f"Camera angles (degrees):")
                 print(f"  Yaw (Y-axis): {yaw_deg:.2f}")
                 print(f"  Pitch (X-axis): {pitch_deg:.2f}")
@@ -121,6 +173,7 @@ print("Camera Calibration Loaded")
 
 # open camera
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FPS, 30)
 
 while True:
     ret, frame = cap.read()

@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 def draw_chessboard(rows, cols, block_size_mm, monitor_width, monitor_height, screen_size_inches):
     # Convert screen size from inches to millimeters
@@ -47,6 +49,30 @@ def draw_chessboard(rows, cols, block_size_mm, monitor_width, monitor_height, sc
 
     return chessboard
 
+def save_to_pdf(chessboard, block_size_mm, rows, cols, filename="chessboard.pdf"):
+    # Convert from BGR (OpenCV) to RGB (Matplotlib)
+    rgb_chessboard = cv2.cvtColor(chessboard, cv2.COLOR_BGR2RGB)
+    
+    # Create a new figure with size in inches (converting from mm to inches)
+    fig_width = cols * block_size_mm / 25.4  # convert mm to inches
+    fig_height = rows * block_size_mm / 25.4
+    
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    
+    # Remove margins and axes
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    
+    # Display the image
+    ax.imshow(rgb_chessboard)
+    
+    # Save to PDF with correct dimensions
+    with PdfPages(filename) as pdf:
+        pdf.savefig(fig, bbox_inches='tight', pad_inches=0)
+    
+    plt.close()
+
 def main():
     # Input the number of rows, columns, block size, monitor resolution, and screen size
     rows = 6
@@ -59,6 +85,9 @@ def main():
     # Draw the chessboard
     chessboard = draw_chessboard(rows, cols, block_size_mm, monitor_width, monitor_height, screen_size_inches)
 
+    # Save to PDF
+    save_to_pdf(chessboard, block_size_mm, rows, cols)
+    
     # Display the chessboard
     cv2.imshow('Chessboard Calibrator', chessboard)
 
