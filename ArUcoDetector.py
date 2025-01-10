@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 from collections import deque
+import json
 
 # Add these as global variables at the top of the file, after imports
 home_position = None
@@ -11,7 +12,14 @@ camera_rotation_matrix = None
 FILTER_WINDOW_SIZE = 10  # Adjust this value to change smoothing (higher = smoother but more latency)
 position_history = deque(maxlen=FILTER_WINDOW_SIZE)
 rotation_history = deque(maxlen=FILTER_WINDOW_SIZE)
-
+robot_home_pos = {
+        "x": 7.3, 
+        "y": 6.2, 
+        "z": -2.7, 
+        "roll": 0, 
+        "pitch": 0, 
+        "yaw": -0.0344
+    }
 def load_camera_data(file_path):
     # Load camera matrix and distortion coefficients from a file
     with np.load(file_path) as data:
@@ -22,7 +30,7 @@ def load_camera_data(file_path):
 def apply_low_pass_filter(new_value, history):
     history.append(new_value)
     result = np.mean(history, axis=0)
-    print("result: ", result)
+    # print("result: ", result)
     return result
 
 def detect_aruco_markers(image, camera_matrix, dist_coeffs):
@@ -105,7 +113,10 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
                              np.sqrt(camera_rotation_matrix[2,1]**2 + camera_rotation_matrix[2,2]**2))
             yaw = np.arctan2(camera_rotation_matrix[2,1], camera_rotation_matrix[2,2])
             roll = np.arctan2(camera_rotation_matrix[1,0], camera_rotation_matrix[0,0])
-            
+            pitch = pitch
+            yaw = yaw
+            roll = roll
+
             # Convert to degrees
             yaw_deg = np.degrees(yaw)
             pitch_deg = np.degrees(pitch)
@@ -117,8 +128,15 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
             
             # Calculate relative position and rotation if home is set
             if home_position is not None:
+                offset_x = 0.0
+                offset_y = 0.0
+                offset_z = 0.0  
                 relative_position = current_position - home_position
+                relative_position[0,0] = relative_position[0,0] + offset_x
+                relative_position[0,1] = -relative_position[0,1] + offset_y
+                relative_position[0,2] = -relative_position[0,2] + offset_z
                 relative_rotation = current_rotation_matrix @ home_rotation_matrix.T
+                
                 distance = np.linalg.norm(relative_position)
                 # Convert relative rotation to euler angles
                 pitch = np.arctan2(-relative_rotation[2,0], 
@@ -145,10 +163,21 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
                 print(f"  Y: {relative_position[0,1]:.3f}")
                 print(f"  Z: {relative_position[0,2]:.3f}")
                 print(f"Angles (degrees):")
-                print(f"  Yaw: {rel_yaw_deg:.2f}")
-                print(f"  Pitch: {rel_pitch_deg:.2f}")
-                print(f"  Roll: {rel_roll_deg:.2f}")
+                # print(f"  Yaw: {rel_yaw_deg:.2f}")
+                # print(f"  Pitch: {rel_pitch_deg:.2f}")
+                # print(f"  Roll: {rel_roll_deg:.2f}")
+                print(f"  Roll (1): {rel_yaw_deg:.2f}")
+                print(f"  Pitch (2): {rel_pitch_deg:.2f}")
+                print(f"  Yaw (3): {rel_roll_deg:.2f}")
+                print(f"Real Position(m):")
+                print(f"  X: {relative_position[0,0] + robot_home_pos['x']:.3f}")
+                print(f"  Y: {relative_position[0,1] + robot_home_pos['y']:.3f}")
+                print(f"  Z: {relative_position[0,2] + robot_home_pos['z']:.3f}")
+                print(f"  Roll (1): {np.radians(rel_yaw_deg + robot_home_pos['roll']):.3f}")
+                print(f"  Pitch (2): {np.radians(rel_pitch_deg + robot_home_pos['pitch']):.3f}")
+                print(f"  Yaw (3): {np.radians(rel_roll_deg + robot_home_pos['yaw']):.3f}")
                 print(f"Distance: {distance:.3f} meters")
+                print(f"")
             else:
                 print(f"Camera position (m):")
                 print(f"  X: {camera_position[0,0]:.3f}")
@@ -164,12 +193,40 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
 
     return image
 
+def save_home_position(file_path='home_position.json'):
+    """Save home position and rotation matrix to a JSON file"""
+    if home_position is not None and home_rotation_matrix is not None:
+        data = {
+            'position': home_position.tolist(),
+            'rotation': home_rotation_matrix.tolist()
+        }
+        with open(file_path, 'w') as f:
+            json.dump(data, f)
+        print(f"\nHome position saved to {file_path}")
+
+def load_home_position(file_path='home_position.json'):
+    """Load home position and rotation matrix from a JSON file"""
+    global home_position, home_rotation_matrix
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            home_position = np.matrix(data['position'])
+            home_rotation_matrix = np.matrix(data['rotation'])
+        print(f"\nHome position loaded from {file_path}")
+        return True
+    except FileNotFoundError:
+        print(f"\nNo saved home position found at {file_path}")
+        return False
+
 # Load camera data from file
-camera_matrix, dist_coeffs = load_camera_data('calibration_data.npz')
+camera_matrix, dist_coeffs = load_camera_data('calibration_data_1080.npz')
 
 print("camera_matrix: ", camera_matrix)
 print("dist_coeffs: ", dist_coeffs)
 print("Camera Calibration Loaded")
+
+load_home_position()
+print("Home position loaded")
 
 # open camera
 cap = cv2.VideoCapture(0)
@@ -188,8 +245,11 @@ while True:
         if 'camera_position' in locals() and 'camera_rotation_matrix' in locals():
             home_position = camera_position
             home_rotation_matrix = camera_rotation_matrix
+            save_home_position()  # Save home position when set
             print("\nHome position set!")
-    elif key == ord('q'):  # Add a quit option
+    elif key == ord('l'):  # Add load functionality
+        load_home_position()
+    elif key == ord('q'):
         break
 
 cap.release()
