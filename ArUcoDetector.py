@@ -12,10 +12,14 @@ camera_rotation_matrix = None
 FILTER_WINDOW_SIZE = 10  # Adjust this value to change smoothing (higher = smoother but more latency)
 position_history = deque(maxlen=FILTER_WINDOW_SIZE)
 rotation_history = deque(maxlen=FILTER_WINDOW_SIZE)
+
+offset_x = 0.01
+offset_y = -0.02
+offset_z = 0.02
 robot_home_pos = {
-        "x": 7.3, 
-        "y": 6.2, 
-        "z": -2.7, 
+        "x": 7.3+offset_x, 
+        "y": 6.2+offset_y, 
+        "z": -2.7+offset_z, 
         "roll": 0, 
         "pitch": 0, 
         "yaw": -0.0344
@@ -128,13 +132,10 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
             
             # Calculate relative position and rotation if home is set
             if home_position is not None:
-                offset_x = 0.0
-                offset_y = 0.0
-                offset_z = 0.0  
                 relative_position = current_position - home_position
-                relative_position[0,0] = relative_position[0,0] + offset_x
-                relative_position[0,1] = -relative_position[0,1] + offset_y
-                relative_position[0,2] = -relative_position[0,2] + offset_z
+                relative_position[0,0] = relative_position[0,0]
+                relative_position[0,1] = -relative_position[0,1]
+                relative_position[0,2] = -relative_position[0,2]
                 relative_rotation = current_rotation_matrix @ home_rotation_matrix.T
                 
                 distance = np.linalg.norm(relative_position)
@@ -145,9 +146,9 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
                 roll = np.arctan2(relative_rotation[1,0], relative_rotation[0,0])
                 
                 # Convert to degrees
-                rel_yaw_deg = np.degrees(yaw)
-                rel_pitch_deg = np.degrees(pitch)
-                rel_roll_deg = np.degrees(roll)
+                rel_yaw_deg = np.degrees(yaw) # roll
+                rel_pitch_deg = -np.degrees(pitch) # pitch
+                rel_roll_deg = -np.degrees(roll) # yaw
                 
                 print(f"Current camera position (m):")
                 print(f"  X: {camera_position[0,0]:.3f}")
