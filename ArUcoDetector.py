@@ -3,12 +3,19 @@ import numpy as np
 import os
 from collections import deque
 import json
+import socket
+import threading
+import time
+from typing import Optional, Dict
 
 # Add these as global variables at the top of the file, after imports
 home_position = None
 home_rotation_matrix = None
 camera_position = None
 camera_rotation_matrix = None
+real_position = None
+real_rotation = None
+distance = None
 FILTER_WINDOW_SIZE = 10  # Adjust this value to change smoothing (higher = smoother but more latency)
 position_history = deque(maxlen=FILTER_WINDOW_SIZE)
 rotation_history = deque(maxlen=FILTER_WINDOW_SIZE)
@@ -24,6 +31,8 @@ robot_home_pos = {
         "pitch": 0, 
         "yaw": -0.0344
     }
+
+
 def load_camera_data(file_path):
     # Load camera matrix and distortion coefficients from a file
     with np.load(file_path) as data:
@@ -40,6 +49,8 @@ def apply_low_pass_filter(new_value, history):
 def detect_aruco_markers(image, camera_matrix, dist_coeffs):
     global home_position, home_rotation_matrix, camera_position, camera_rotation_matrix
     global position_history, rotation_history
+
+    global real_position, real_rotation, distance
     
 
     # Load the dictionary that was used to generate the markers
@@ -150,6 +161,17 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
                 rel_pitch_deg = -np.degrees(pitch) # pitch
                 rel_roll_deg = -np.degrees(roll) # yaw
                 
+                real_position = [
+                    relative_position[0,0] + robot_home_pos['x'],
+                    relative_position[0,1] + robot_home_pos['y'],
+                    relative_position[0,2] + robot_home_pos['z']
+                ]
+                real_rotation = [
+                    np.radians(rel_yaw_deg + robot_home_pos['roll']),
+                    np.radians(rel_pitch_deg + robot_home_pos['pitch']),
+                    np.radians(rel_roll_deg + robot_home_pos['yaw'])
+                ]
+
                 print(f"Current camera position (m):")
                 print(f"  X: {camera_position[0,0]:.3f}")
                 print(f"  Y: {camera_position[0,1]:.3f}")
@@ -171,12 +193,12 @@ def detect_aruco_markers(image, camera_matrix, dist_coeffs):
                 print(f"  Pitch (2): {rel_pitch_deg:.2f}")
                 print(f"  Yaw (3): {rel_roll_deg:.2f}")
                 print(f"Real Position(m):")
-                print(f"  X: {relative_position[0,0] + robot_home_pos['x']:.3f}")
-                print(f"  Y: {relative_position[0,1] + robot_home_pos['y']:.3f}")
-                print(f"  Z: {relative_position[0,2] + robot_home_pos['z']:.3f}")
-                print(f"  Roll (1): {np.radians(rel_yaw_deg + robot_home_pos['roll']):.3f}")
-                print(f"  Pitch (2): {np.radians(rel_pitch_deg + robot_home_pos['pitch']):.3f}")
-                print(f"  Yaw (3): {np.radians(rel_roll_deg + robot_home_pos['yaw']):.3f}")
+                print(f"  X: {real_position[0]:.3f}")
+                print(f"  Y: {real_position[1]:.3f}")
+                print(f"  Z: {real_position[2]:.3f}")
+                print(f"  Roll (1): {real_rotation[0]:.3f}")
+                print(f"  Pitch (2): {real_rotation[1]:.3f}")
+                print(f"  Yaw (3): {real_position[2]:.3f}")
                 print(f"Distance: {distance:.3f} meters")
                 print(f"")
             else:
@@ -219,39 +241,74 @@ def load_home_position(file_path='home_position.json'):
         print(f"\nNo saved home position found at {file_path}")
         return False
 
-# Load camera data from file
-camera_matrix, dist_coeffs = load_camera_data('calibration_data_1080.npz')
+def get_current_position() -> Optional[Dict]:
+    """Return the current position and rotation data if available"""
+    if real_position is None or real_rotation is None:
+        return None
 
-print("camera_matrix: ", camera_matrix)
-print("dist_coeffs: ", dist_coeffs)
-print("Camera Calibration Loaded")
+    return {
+        "x": float(real_position[0]),
+        "y": float(real_position[1]),
+        "z": float(real_position[2]),
+        "roll": float(real_rotation[0]),
+        "pitch": float(real_rotation[1]),
+        "yaw": float(real_rotation[2]),
+        "distance": float(distance)
+    }
 
-load_home_position()
-print("Home position loaded")
-
-# open camera
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FPS, 30)
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+def run_udp_server():
+    """Run UDP server to handle position requests"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((UDP_IP, UDP_PORT))
+    print(f"UDP server listening on {UDP_IP}:{UDP_PORT}")
     
-    output_image = detect_aruco_markers(frame, camera_matrix, dist_coeffs)
-    cv2.imshow('Detected ArUco markers', output_image)
-    
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('h'):
-        if 'camera_position' in locals() and 'camera_rotation_matrix' in locals():
-            home_position = camera_position
-            home_rotation_matrix = camera_rotation_matrix
-            save_home_position()  # Save home position when set
-            print("\nHome position set!")
-    elif key == ord('l'):  # Add load functionality
-        load_home_position()
-    elif key == ord('q'):
-        break
+    while True:
+        data, addr = sock.recvfrom(1024)
+        if data.decode() == "get_position":
+            position_data = get_current_position()
+            if position_data:
+                response = json.dumps(position_data)
+                sock.sendto(response.encode(), addr)
+            else:
+                sock.sendto(b"No position data available", addr)
 
-cap.release()
-cv2.destroyAllWindows()
+# Modify the main execution block at the bottom of the file
+if __name__ == "__main__":
+    # Add new globals for UDP server
+    UDP_IP = "127.0.0.1"
+    UDP_PORT = 5000
+    last_position: Optional[Dict] = None
+    # Start UDP server in a separate thread
+    udp_thread = threading.Thread(target=run_udp_server, daemon=True)
+    udp_thread.start()
+    
+    # Load camera data and home position
+    camera_matrix, dist_coeffs = load_camera_data('calibration_data_1080.npz')
+    load_home_position()
+    
+    # open camera
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    print("Press 'q' to quit")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        output_image = detect_aruco_markers(frame, camera_matrix, dist_coeffs)
+        cv2.imshow('Detected ArUco markers', output_image)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('h'):
+            if 'camera_position' in locals() and 'camera_rotation_matrix' in locals():
+                home_position = camera_position
+                home_rotation_matrix = camera_rotation_matrix
+                save_home_position()
+                print("\nHome position set!")
+        elif key == ord('l'):
+            load_home_position()
+        elif key == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
