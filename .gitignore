@@ -34,3 +34,6 @@ wheels/
 *.swp
 *.swo
 .DS_Store 
+
+# generated pdf
+*.pdf

@@ -275,7 +275,7 @@ def run_udp_server():
 # Modify the main execution block at the bottom of the file
 if __name__ == "__main__":
     # Add new globals for UDP server
-    UDP_IP = "127.0.0.1"
+    UDP_IP = "0.0.0.0"
     UDP_PORT = 5000
     last_position: Optional[Dict] = None
     # Start UDP server in a separate thread
