@@ -289,6 +289,8 @@ if __name__ == "__main__":
     # open camera
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FPS, 30)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     print("Press 'q' to quit")
     while True:
         ret, frame = cap.read()
