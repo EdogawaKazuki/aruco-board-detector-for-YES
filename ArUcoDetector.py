@@ -5,7 +5,6 @@ from collections import deque
 import json
 import socket
 import threading
-import time
 from typing import Optional, Dict
 
 # Add these as global variables at the top of the file, after imports
